@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.env
+.env.*
+*.sqlite*
+private/
+qa-artifacts/
+.ruff_cache/
+*私有备份*.json
+题库更新_*.json
+求职简历_V*.*
+五点面试稿_V*.*
+十八点面试稿_V*.*
+*.log
+*.pem

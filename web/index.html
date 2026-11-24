@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Offer 来了 · 求职练习室</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script defer src="/app.js"></script>
+  </head>
+  <body>
+    <aside>
+      <a class="brand" href="#workspace"
+        ><b>O<span>.</span></b
+        ><strong>Offer 来了</strong></a
+      >
+      <nav aria-label="工作台">
+        <button data-page="workspace">我的求职材料</button
+        ><button data-page="bank">面试题库</button
+        ><button data-page="mock">模拟面试</button
+        ><button data-page="review">错题复习</button
+        ><button data-page="teacher" id="teacherNav" hidden>
+          教师题库维护
+        </button>
+      </nav>
+      <div class="local-note"><i></i> 本机工作台</div>
+    </aside>
+    <main>
+      <div id="status" role="status"></div>
+      <article id="view"><h1>打开工作台…</h1></article>
+    </main>
+    <dialog id="modal">
+      <header>
+        <h2 id="modalTitle"></h2>
+        <button id="close" aria-label="关闭">关闭</button>
+      </header>
+      <div id="modalBody"></div>
+    </dialog>
+  </body>
+</html>
