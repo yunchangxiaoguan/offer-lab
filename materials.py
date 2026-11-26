@@ -253,6 +253,20 @@ def parse_project(raw, number):
         key, value = (
             (LABELS[label[1]], label[2].strip()) if label else (field_for(s), s)
         )
+        if (
+            not label
+            and facts
+            and facts[-1][0] == "issue"
+            and re.match(r"(?:我|本人)(?:把|改为|改用|在|增加|加了|调整|通过|用)", s)
+        ):
+            key = "solution"
+        if (
+            not label
+            and facts
+            and facts[-1][0] == "flow"
+            and re.search(r"候选|时转人工|缺少.{0,8}字段|向.{0,8}确认", s)
+        ):
+            key = "flow"
         if UNCERTAIN.search(s):
             uncertain_metrics = True
             continue
@@ -312,7 +326,7 @@ def profile_data(kind, profile):
     raw = profile.get("projects")
     if (
         not isinstance(raw, list)
-        or not 3 <= len(raw) <= 5
+        or not (0 if kind == "resume" else 3) <= len(raw) <= 5
         or any(not isinstance(p, str) or not p.strip() for p in raw)
     ):
         raise ValueError("请粘贴 3–5 个非空项目。")
@@ -336,6 +350,43 @@ def profile_data(kind, profile):
         ]
         name = [next((v for v in values if v), "个人简历")]
     return name[0], basic, projects
+
+
+def resume_skill(project):
+    role = project.get("role", limit=2)
+    if not role or re.search(r"非本人|不是我|未参与|团队负责|其他人负责", role):
+        return ""
+    terms = re.findall(
+        r"工具调用|工具编排|人工确认|回执查询|日期过滤|生效日期|标题切分|按标题切分|保留页码|向量检索|混合召回|检索|重排|元数据|原文引用|低置信字段|复核|接口联调|校验时间冲突|只读汇总|数据范围过滤|参数校验|故障回放|微调|部署|容器化|测试|回归|核对|编写查询工具|分流规则|校验订单号|金额格式|[A-Za-z][A-Za-z0-9+#-]+",
+        role,
+        re.I,
+    )
+    terms = list(dict.fromkeys(terms))[:3]
+    if not terms:
+        return ""
+    if not re.search(r"配合|协助|参与", role):
+        how = re.search(
+            r"(?:本人|我|[，,；;])(?:使用|用)([^。，；]{2,40}?)(编写|构建|配置|微调|训练|开发)([^。，；]{2,35})",
+            role,
+        )
+        if how:
+            method = how[1].strip()
+            gap = " " if re.search(r"[A-Za-z0-9]", method) else ""
+            return f"- 能用{gap}{method}{gap}{how[2]}{how[3]}，用于{project.title}。"
+        if "低置信字段" in terms and "复核" in terms:
+            return f"- 熟悉{project.title}的字段校验，能将低置信字段交给人工复核。"
+        if "工具调用" in terms and "人工确认" in terms and "回执查询" in terms:
+            return f"- 熟悉{project.title}的工具调用，能处理提交前确认和回执查询。"
+        if "按标题切分" in terms and "保留页码" in terms:
+            return f"- 熟悉{project.title}的文档处理，按标题切分材料并保留页码。"
+        if re.search(r"日期过滤|按生效日期过滤", role) and re.search(
+            r"引用|原始条款|原文", role
+        ):
+            return f"- 熟悉{project.title}的条款检索，按生效日期过滤并保留原文依据。"
+    intro = "在" + project.title + "中"
+    if re.search(r"配合|协助|参与", role):
+        return "- " + intro + "参与" + "、".join(terms) + "相关工作。"
+    return "- 熟悉" + project.title + "中的" + "、".join(terms) + "。"
 
 
 def resume_text(name, basic, projects):
@@ -363,14 +414,17 @@ def resume_text(name, basic, projects):
         grouped[active].append(s)
     if grouped["求职信息"]:
         sections += ["## 求职信息", *grouped["求职信息"]]
-    skills = []
-    for p in projects:
-        evidence = p.get("role", limit=1)
-        if evidence and TECH.search(p.title + " " + evidence):
-            skills.append(f"- {p.title}：{evidence}")
+    skills = [
+        s for p in sorted(projects, key=project_priority) if (s := resume_skill(p))
+    ]
+    if not skills:
+        for p in projects:
+            role = p.get("role", limit=1)
+            if role:
+                skills.append("- " + role)
     if skills:
         sections += ["## 专业技能", *skills]
-    for topic in ("工作经历", "教育经历"):
+    for topic in ("工作经历",):
         if grouped[topic]:
             sections += ["## " + topic, *grouped[topic]]
     sections += ["## 项目经历"]
@@ -396,7 +450,7 @@ def resume_text(name, basic, projects):
             "other",
         )
         for field in priorities:
-            limit = 2 if field in ("role", "check") else 1
+            limit = 2 if field in ("role", "check", "flow") else 1
             for value in [v for key, v in p.facts if key == field][:limit]:
                 if len(value) <= budget or not selected:
                     selected.append((field, value))
@@ -422,13 +476,29 @@ def resume_text(name, basic, projects):
                 if key == field:
                     prefix = {
                         "role": "本人职责：",
-                        "tech": "技术栈：",
                         "period": "时间：",
                         "check": "验证：",
                         "result": "项目成果：",
                         "scope": "分工：",
                     }
-                    sections.append(prefix.get(key, "") + value)
+                    if key == "tech":
+                        continue
+                    elif (
+                        key == "role"
+                        and p.get("tech")
+                        and value.rstrip("。") == p.get("role", limit=1).rstrip("。")
+                    ):
+                        stack = p.get("tech", limit=1).rstrip("。")
+                        sections.append(
+                            f"本人职责：在采用{stack}的项目中，"
+                            + re.sub(
+                                r"^(?:本人|我)(?=负责|配合|参与|维护|实现)", "", value
+                            )
+                        )
+                    else:
+                        sections.append(prefix.get(key, "") + value)
+    if grouped["教育经历"]:
+        sections += ["## 教育经历", *grouped["教育经历"]]
     return "\n\n".join(sections)
 
 
@@ -1117,7 +1187,7 @@ def export_pdf(pages):
                 color=(0.38, 0.45, 0.48),
             )
         document.subset_fonts()
-        return document.tobytes(garbage=3, deflate=True)
+        return document.tobytes(garbage=3, deflate=True, no_new_id=True)
 
 
 def export_docx(pages):
@@ -1164,4 +1234,18 @@ def export_material(kind, fmt, text):
     if fmt == "md":
         return (body + "\n").encode("utf-8")
     pages = paginate(kind, material_blocks(body))
-    return export_docx(pages) if fmt == "docx" else export_pdf(pages)
+    if fmt == "pdf":
+        return export_pdf(pages)
+    data = export_docx(pages)
+    if kind != "resume":
+        return data
+    # Version records and downloads must refer to the same editable artifact.
+    from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
+
+    output = io.BytesIO()
+    with ZipFile(io.BytesIO(data)) as original, ZipFile(output, "w") as archive:
+        for path in original.namelist():
+            archive.writestr(
+                ZipInfo(path), original.read(path), compress_type=ZIP_DEFLATED
+            )
+    return output.getvalue()

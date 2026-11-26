@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 
 import service
 import store
+import workflow
 
 STATIC = Path(__file__).resolve().parent / "web"
 FILES = {"/": "index.html", "/app.js": "app.js", "/style.css": "style.css"}
@@ -111,6 +112,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.read(path, data)
             if path == "/api/generate":
                 return self.reply(service.generate(self.owner, data))
+            if path in ("/api/material/edit", "/api/material/recheck"):
+                return self.reply(
+                    workflow.revise(self.owner, data, edit=path.endswith("/edit"))
+                )
             if path == "/api/personal":
                 return self.reply(service.make_set(self.owner, data))
             if path == "/api/teacher/preview":
@@ -120,6 +125,8 @@ class Handler(BaseHTTPRequestHandler):
             with store.db(True) as c:
                 result = self.write(c, path, data)
             return self.reply(result)
+        except workflow.MaterialBlocked as exc:
+            return self.reply({"error": str(exc), "issues": exc.issues}, 400)
         except (ValueError, KeyError, TypeError) as exc:
             return self.reply({"error": str(exc)[:400]}, 400)
         except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
@@ -141,9 +148,14 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/taxonomy":
                 return self.reply(service.taxonomy())
             if path == "/api/profile":
-                return self.reply(store.get(c, self.owner, d.get("id"), ("profile",)))
+                return self.reply(
+                    workflow.profile_info(
+                        store.get(c, self.owner, d.get("id"), ("profile",))
+                    )
+                )
             if path == "/api/material":
-                return self.reply(store.get(c, self.owner, d.get("id"), service.KINDS))
+                record = store.get(c, self.owner, d.get("id"), service.KINDS)
+                return self.reply({**record, **workflow.material_info(record)})
             if path == "/api/export":
                 from materials import export_material
 
@@ -160,8 +172,17 @@ class Handler(BaseHTTPRequestHandler):
                     "five": "五点面试稿",
                     "eighteen": "十八点面试稿",
                 }[kind]
+                status = workflow.material_info(record)["status"]
+                name += {"draft": "_草稿", "legacy": "_历史版本", "ready": ""}[status]
+                file = None
+                if kind == "resume" and fmt in ("docx", "pdf"):
+                    row = c.execute(
+                        "SELECT docx,pdf FROM resume_files WHERE record_id=?", (key,)
+                    ).fetchone()
+                    if row:
+                        file = row[fmt]
                 return self.reply(
-                    export_material(kind, fmt, record["text"]),
+                    file or export_material(kind, fmt, record["text"]),
                     ctype=mimetypes.guess_type("document." + fmt)[0]
                     or "application/octet-stream",
                     filename=f"{name}_V{key}.{fmt}",
@@ -265,36 +286,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/split":
             return {"projects": store.split_projects(str(d.get("text", "")))}
         if path == "/api/profile":
-            value = store.profile(d)
-            last = c.execute(
-                "SELECT id,body FROM records WHERE owner=? AND kind='profile' ORDER BY id DESC LIMIT 1",
-                (owner,),
-            ).fetchone()
-            return {
-                "id": last["id"]
-                if last and json.loads(last["body"]) == value
-                else store.add(c, owner, "profile", value)
-            }
-        if path == "/api/material/edit":
-            key = d.get("id")
-            value = store.get(c, owner, key, service.KINDS)
-            if (
-                not isinstance(d.get("text"), str)
-                or not 0 < len(d["text"].strip()) <= 300000
-            ):
-                raise ValueError("正文为空或过长。")
-            kind = c.execute("SELECT kind FROM records WHERE id=?", (key,)).fetchone()[
-                0
-            ]
-            return {
-                "id": store.add(
-                    c,
-                    owner,
-                    kind,
-                    {**value, "text": d["text"].strip(), "mode": "手工修订"},
-                    value["profile_id"],
-                )
-            }
+            return workflow.save_profile(c, owner, d)
         if path == "/api/answer":
             if d.get("attempt"):
                 r = c.execute(

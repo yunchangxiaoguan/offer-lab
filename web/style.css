@@ -263,21 +263,43 @@ select {
   margin-top: 16px;
 }
 .paper {
-  display: grid;
-  grid-template-columns: 37px 1fr;
-  gap: 12px;
   padding: 15px 16px;
 }
-.paper .icon {
-  display: grid;
-  place-items: center;
-  font-weight: 700;
-  font-family: Georgia, serif;
-  color: var(--green);
-  background: #e7efe7;
-  font-size: 20px;
+.material-heading, .gap-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.material-tag {
   border-radius: 5px;
-  height: 42px;
+  padding: 2px 7px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.material-tag.pass { color: #195741; background: #e3f1e7; }
+.material-tag.check { color: #714619; background: #fbefdb; }
+.gap-panel {
+  margin-top: 16px;
+  border: 1px solid #e5d4b6;
+  border-radius: 9px;
+  background: #fcf8f0;
+  padding: 15px;
+}
+.gap {
+  margin-top: 12px;
+  border-top: 1px solid #e6dbca;
+  padding-top: 11px;
+}
+.gap strong { font-size: 14px; }
+.gap-actions { margin: 8px 0 0; }
+.gap-actions button { font-size: 13px; padding: 5px 9px; }
+.issue-question { font-weight: 600; }
+.issue-list { padding-left: 20px; line-height: 1.65; }
+.issue-list small, .gap small, .fact-evidence small, #versions small {
+  display: block;
+  color: var(--muted);
 }
 .paper .buttons {
   display: flex;

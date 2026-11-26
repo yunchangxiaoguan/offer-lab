@@ -8,8 +8,9 @@ from functools import lru_cache
 
 import llm
 import store
+import workflow
 
-KINDS = ("resume", "five", "eighteen")
+KINDS = workflow.KINDS
 STUDENT_CARD = (
     "id",
     "title",
@@ -124,8 +125,20 @@ def state(c, owner, teacher):
         if row["kind"] == "profile":
             out["profiles"].append({**item, "name": data["name"]})
         elif row["kind"] in KINDS:
+            info = workflow.material_info(data)
             out["materials"].append(
-                {**item, "mode": data["mode"], "based_on": data.get("based_on")}
+                {
+                    **item,
+                    "mode": data["mode"],
+                    "based_on": data.get("based_on"),
+                    "five_id": data.get("five_id"),
+                    "status": info["status"],
+                    "issues": info["issues"][:3],
+                    "review": {
+                        "status": info["status"],
+                        "retryable": bool(info["review"].get("retryable")),
+                    },
+                }
             )
         elif row["kind"] == "set":
             out["sets"].append({**item, "count": len(data["cards"])})
@@ -141,7 +154,9 @@ def state(c, owner, teacher):
     if out["profiles"]:
         out["profile"] = {
             "id": out["profiles"][0]["id"],
-            **store.get(c, owner, out["profiles"][0]["id"], ("profile",)),
+            **workflow.profile_info(
+                store.get(c, owner, out["profiles"][0]["id"], ("profile",))
+            ),
         }
     out.update(
         {
@@ -169,30 +184,7 @@ def require_model(data):
 
 
 def generate(owner, data):
-    from materials import generate_material
-
-    kind = data.get("kind")
-    if kind not in KINDS:
-        raise ValueError("未知的材料类型。")
-    key = data.get("profile_id")
-    source = data.get("resume_id")
-    with store.db() as c:
-        profile = store.get(c, owner, key, ("profile",))
-        if source and kind != "resume":
-            r = store.get(c, owner, source, ("resume",))
-            if r["profile_id"] != key:
-                raise ValueError("简历与当前资料版本不一致。")
-            profile["resume"] = r["text"]
-    use = require_model(data)
-    text = generate_material(kind, profile, use_model=use)
-    record = {
-        "profile_id": key,
-        "based_on": source if kind != "resume" else None,
-        "mode": "模型生成" if use else "本机生成",
-        "text": text,
-    }
-    with store.db(True) as c:
-        return {"id": store.add(c, owner, kind, record, key)}
+    return workflow.generate(owner, data, require_model(data))
 
 
 def make_set(owner, data):
@@ -200,7 +192,7 @@ def make_set(owner, data):
 
     key = data.get("resume_id")
     with store.db() as c:
-        doc = store.get(c, owner, key, ("resume",))
+        doc = workflow.approved(c, owner, key, "resume")
         profile = store.get(c, owner, doc["profile_id"], ("profile",))
     cards = personal_cards(profile, doc["text"], use_model=require_model(data))
     if not cards:

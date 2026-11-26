@@ -47,6 +47,12 @@ def init():
         CREATE TABLE IF NOT EXISTS records(id INTEGER PRIMARY KEY, owner TEXT NOT NULL,
             kind TEXT NOT NULL, parent INTEGER, body TEXT NOT NULL, created TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE INDEX IF NOT EXISTS records_owner ON records(owner,kind,id);
+        CREATE TABLE IF NOT EXISTS generation_jobs(owner TEXT NOT NULL, job TEXT NOT NULL,
+            record_id INTEGER, PRIMARY KEY(owner, job));
+        CREATE TABLE IF NOT EXISTS generation_parts(owner TEXT NOT NULL, job TEXT NOT NULL,
+            part TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(owner, job, part));
+        CREATE TABLE IF NOT EXISTS resume_files(record_id INTEGER PRIMARY KEY,
+            pdf BLOB NOT NULL, docx BLOB NOT NULL);
         CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY,owner TEXT NOT NULL,
             scope TEXT NOT NULL, qid TEXT NOT NULL, card TEXT NOT NULL, selected INTEGER NOT NULL,
             created TEXT DEFAULT CURRENT_TIMESTAMP);
@@ -84,6 +90,9 @@ def split_projects(text):
         )
     )
     if len(heads) < 2:
+        if len(heads) == 1 and heads[0].start() == 0:
+            # One labelled multi-line project is a legitimate unfinished profile.
+            return [text]
         heads = list(
             re.finditer(
                 r"(?m)^[ \t]*(?:#{1,4}[ \t]*|(?:[1-5][.、)）]|[一二三四五]、)[ \t]*)\S",
@@ -102,7 +111,10 @@ def split_projects(text):
         for v in re.split(r"\n[ \t]*(?:[-=]{3,}[ \t]*\n|\n+)", text)
         if v.strip()
     ]
-    if len(blocks) == 1:
+    if len(blocks) == 1 and not re.search(
+        r"(?m)^\s*(?:本人|职责|背景|用户|难点|技术|结果|交付|验证)[^：:\n]{0,6}[：:]",
+        text,
+    ):
         blocks = [v.strip() for v in text.splitlines() if v.strip()]
     return blocks
 
@@ -110,21 +122,27 @@ def split_projects(text):
 def profile(body):
     basic = body.get("basic", "")
     projects = body.get("projects", [])
-    if not isinstance(basic, str) or not basic.strip() or len(basic) > 20000:
-        raise ValueError("请填写基本信息，限两万字。")
+    standard = body.get("standard", "auto")
+    if standard not in ("auto", "job", "class"):
+        raise ValueError("请选择当前资料使用的简历标准。")
+    if not isinstance(basic, str) or len(basic) > 20000:
+        raise ValueError("基本信息限两万字。")
     if (
         not isinstance(projects, list)
-        or not 3 <= len(projects) <= 5
+        or len(projects) > 5
         or any(
             not isinstance(x, str) or not x.strip() or len(x) > 30000 for x in projects
         )
     ):
-        raise ValueError("请分别保留 3–5 个非空项目，每个项目限三万字。")
+        raise ValueError("最多可保存 5 个非空项目，每个项目限三万字。")
+    if not basic.strip() and not projects:
+        raise ValueError("请先粘贴基本信息或一段项目资料。")
     name = re.search(r"(?:姓名|称呼|名字)\s*[:：]\s*([^，,、；;\s|｜]{1,30})", basic)
     return {
         "name": name[1] if name else "",
         "basic": basic.strip(),
         "projects": [x.strip() for x in projects],
+        "standard": standard,
     }
 
 
@@ -224,6 +242,29 @@ def restore(c, owner, payload):
                 raise ValueError("备份中的资料版本不一致。")
             if body.get("based_on") is not None:
                 body["based_on"] = mapped(body["based_on"], "resume")
+            if body.get("five_id") is not None:
+                body["five_id"] = mapped(body["five_id"], "five")
+            if (kind == "resume" and body.get("based_on")) or (
+                kind != "eighteen" and body.get("five_id")
+            ):
+                raise ValueError("备份中的材料依赖类型无效。")
+            if body.get("based_on"):
+                resume = get(c, owner, body["based_on"], ("resume",))
+                if resume["profile_id"] != parent:
+                    raise ValueError("备份中的简历与资料不一致。")
+            if body.get("five_id"):
+                five = get(c, owner, body["five_id"], ("five",))
+                if (
+                    five.get("based_on") != body.get("based_on")
+                    or five["profile_id"] != parent
+                ):
+                    raise ValueError("备份中的两份面试稿依据不一致。")
+            # Restored reviews are supplied by the uploader. Recheck the local copy.
+            body = {
+                k: body[k]
+                for k in ("profile_id", "based_on", "five_id", "text", "mode")
+                if k in body
+            }
         if kind == "set":
             parent = mapped(item.get("parent"), "resume")
             if not isinstance(body.get("cards"), list):
